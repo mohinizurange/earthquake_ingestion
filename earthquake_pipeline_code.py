@@ -4,20 +4,35 @@ from pyspark.sql.functions import col,from_unixtime,split,trim,lit,to_timestamp,
 from util import Utils
 from datetime import datetime
 from google.cloud import bigquery
-
+import argparse
 
 if __name__ == '__main__':
-    # Initialize Spark session
+    ## Initialize Spark session
     spark = SparkSession.builder.master("local[*]").appName("extarct_the_data_from_API").getOrCreate()
 
     ## initializtion of temp bucket for storing stagging data
     bucket = "earthquake_dataproc_temp_bucket"
     spark.conf.set("temporaryGcsBucket", bucket)
 
-    ## API uri
-    api_url ="https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
+    ## Create an argument parser to handle command-line arguments
+    parser = argparse.ArgumentParser()
+    ## Add a required argument for the API URL with a help description
+    parser.add_argument('-api_url', '--api_url', required=True, help='API URL required')
+    parser.add_argument('-pipeline_nm', '--pipeline_nm', required=True, help='pipeline name ')
 
-    # Get the current date and time in 'YYYYMMDD_HHMMSS' format
+    ## Parse the command-line arguments
+    arg = parser.parse_args()
+    ## Assign the parsed API URL to a variable
+    api_url = arg.api_url
+    pipeline_name=arg.pipeline_nm
+
+    ## API uri
+    ##monthly
+    # api_url ="https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
+    ## daily
+    # api_url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
+
+    ## Get the current date and time in 'YYYYMMDD_HHMMSS' format
     cur_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     ##call class Utils
@@ -28,7 +43,8 @@ if __name__ == '__main__':
 
     ## job_id for audit log
     job_id = cur_timestamp
-    pipeline_name = "earthquake_pipeline_dev"
+    # pipeline_name='daily'
+
 
     ############################### function 1 : extractallData   ############################################################################################
     ## information collect for audit log regarding extract data function
@@ -36,8 +52,8 @@ if __name__ == '__main__':
         function_name = "1_extractallData"
         start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        ## call extractData function for extract all data from api
-        all_data = util_obj.extractallData(api_url)
+        # Call a function to extract all data from the API (the function extractallData should return the data as a string)
+        source_data = util_obj.extractallData(api_url)
 
         end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
         status = "successful"
@@ -57,15 +73,84 @@ if __name__ == '__main__':
     ## write audit data to bigquery by using writeDataBigquery function
     util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
 
-    ########################################### function 2: extractRequiredData #############################################################################################################
+
+    ########################################### function 2: writeExtractDataintoGCS #############################################################################################################
 
     ## information collect for audit log regarding extract data function
     try:
-        function_name = "2_extractRequiredData"
+        function_name = "2_writeExtractDataintoGCS"
+        start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        ## call function writeExtractDataintoGCS for write data in bucket
+        # Initialize the GCP project ID
+        project_id = 'spark-learning-431506'
+        # Define the GCS bucket name where the data will be stored
+        load_data_bucket_name = 'earthquake_analysis_buck'
+        # Set the destination blob (file) name with a unique timestamp
+        destination_blob_name = f'pyspark/landing/{cur_timestamp}'
+        ## call function writeExtractDataintoGCS
+        util_obj.writeExtractDataintoGCS(project_id, source_data, load_data_bucket_name, destination_blob_name, api_url)
+
+        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+        status = "successful"
+        process_record = 0
+
+    except:
+        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+        status = "fail"
+        process_record = 0
+
+    ## create audit data fram by using  createDFforAuditTbl function
+    audit_df = util_obj.createDFforAuditTbl(spark, job_id, pipeline_name, function_name, start_time, end_time, status,process_record)
+
+    ## call auditTblSchema function for get audit table schema
+    audit_table_schema = util_obj.auditTblSchema()
+
+    ## write audit data to bigquery by using writeDataBigquery function
+    util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
+
+    ########################################### function 3: readDataFromLandingGcs #############################################################################################################
+
+    ## information collect for audit log regarding extract data function
+    try:
+        function_name = "3_readDataFromLandingGcs"
+        start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        ## read data(json) from gcs bucket(from landing or bronze layer) by using readDataFromLandingGcs function
+        # Specify the GCS bucket and blob name
+        read_data_bucket_name = load_data_bucket_name
+        read_data_location = destination_blob_name
+        # call function readDataFromLandingGcs
+        json_data = util_obj.readDataFromLandingGcs(project_id,read_data_bucket_name, read_data_location)
+        # print(json_data,type(json_data)) ##dict
+
+        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+        status = "successful"
+        process_record = 0
+
+    except:
+        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+        status = "fail"
+        process_record = 0
+
+    ## create audit data fram by using  createDFforAuditTbl function
+    audit_df = util_obj.createDFforAuditTbl(spark, job_id, pipeline_name, function_name, start_time, end_time, status,process_record)
+
+    ## call auditTblSchema function for get audit table schema
+    audit_table_schema = util_obj.auditTblSchema()
+
+    ## write audit data to bigquery by using writeDataBigquery function
+    util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
+
+    ########################################### function 4: extractRequiredData #############################################################################################################
+
+    ## information collect for audit log regarding extract data function
+    try:
+        function_name = "4_extractRequiredData"
         start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         ## call extractRequiredData function for fetch required data
-        reuired_data_lst_of_dic = util_obj.extractRequiredData(all_data)
+        reuired_data_lst_of_dic = util_obj.extractRequiredData(json_data)
 
         end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
         status = "successful"
@@ -85,11 +170,11 @@ if __name__ == '__main__':
     ## write audit data to bigquery by using writeDataBigquery function
     util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
 
-    ########################################### function 3: convertIntoDF #############################################################################################################
+    ########################################### function 5: convertIntoDF #############################################################################################################
 
     ## information collect for audit log regarding extract data function
     try:
-        function_name = "3_convertIntoDF"
+        function_name = "5_convertIntoDF"
         start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         ## call convertIntoDF function for convert into dataframe
@@ -114,77 +199,8 @@ if __name__ == '__main__':
     ## write audit data to bigquery by using writeDataBigquery function
     util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
 
-    ########################################### function 4: writeIntoGcs #############################################################################################################
 
-    ## information collect for audit log regarding extract data function
-    try:
-        function_name = "4_writeIntoGcs"
-        start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        ## call function writeIntoGcs for write data into gsc bucket (earthquake_analysis)
-
-        gcs_landing_location = f"gs://earthquake_analysis_buck/pyspark/landing/{cur_timestamp}"
-        # gcs_landing_location = f"D:/Mohini Data Science/earthquake_ingestion/bronze/landing_data/earthquake{cur_timestamp}"
-        util_obj.writeIntoGcs(earthquake_dataframe, gcs_landing_location)
-
-        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-        status = "successful"
-        process_record = earthquake_dataframe.count()
-
-    except:
-        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-        status = "fail"
-        process_record = 0
-
-    ## create audit data fram by using  createDFforAuditTbl function
-    audit_df = util_obj.createDFforAuditTbl(spark, job_id, pipeline_name, function_name, start_time, end_time, status,process_record)
-
-    ## call auditTblSchema function for get audit table schema
-    audit_table_schema = util_obj.auditTblSchema()
-
-    ## write audit data to bigquery by using writeDataBigquery function
-    util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
-
-#######################################################################################################################################################################
-
-
-    ## read data from gcs
-    gcs_input_location = gcs_landing_location
-
-
-    ########################################### function 5: readDataFromloandingGCS #############################################################################################################
-
-    ## information collect for audit log regarding extract data function
-    try:
-        function_name = "5_readDataFromloandingGCS"
-        start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        ##call readDataFromloandingGCS function for read data
-        earthquake_data = util_obj.readDataFromloandingGCS(spark, gcs_input_location)
-        # earthquake_data.show()
-        # earthquake_data.printSchema()
-
-        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-        status = "successful"
-        process_record = earthquake_data.count()
-
-    except:
-        end_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-        status = "fail"
-        process_record = 0
-
-    ## create audit data fram by using  createDFforAuditTbl function
-    audit_df = util_obj.createDFforAuditTbl(spark, job_id, pipeline_name, function_name, start_time, end_time, status,process_record)
-
-    ## call auditTblSchema function for get audit table schema
-    audit_table_schema = util_obj.auditTblSchema()
-
-    ## write audit data to bigquery by using writeDataBigquery function
-    util_obj.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
-
-
-
-    ########################################### function 6: flattenData #############################################################################################################
+########################################### function 6: flattenData #############################################################################################################
 
     ## information collect for audit log regarding extract data function
     try:
@@ -192,7 +208,7 @@ if __name__ == '__main__':
         start_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         ## call flattenData function for flattening the data
-        flatten_data_df = util_obj.flattenData(earthquake_data)
+        flatten_data_df = util_obj.flattenData(earthquake_dataframe)
         flatten_data_df.show(truncate=False)
         # flatten_data_df.printSchema()
 
