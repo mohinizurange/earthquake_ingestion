@@ -1,4 +1,3 @@
-import logging
 
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType,FloatType, ArrayType,TimestampType
 from pyspark.sql.functions import col,from_unixtime,split,trim,lit,to_timestamp,current_timestamp,substring,instr,length,expr
@@ -16,8 +15,8 @@ class Utils():
        This class provides methods for:
        - Extracting data from APIs
        - Writing and reading data to/from Google Cloud Storage (GCS)
-       -Flattening DataFrames
        - Transforming data into Spark DataFrames
+       - Flattening DataFrames
        - Defining schemas for Spark DataFrames and BigQuery
        """
     ## define extractallData function
@@ -33,7 +32,6 @@ class Utils():
                 """
 
         ## by using get method extract the data from api
-
         response = requests.get(api_url)
 
         ##Check if the request was successful
@@ -41,15 +39,12 @@ class Utils():
             ##convert data into json
             all_data = response.json()  # converts the (api)JSON response data into Python data types (usually a dictionary or a list).
             # print("Extracted Data:", all_data)
-            logging.info(f"extract data successfully from {api_url}")
+            print(f"extract data successfully from {api_url}")
             return json.dumps(all_data)  # Convert the Python dictionary to a JSON string
 
         else:
-            logging.error(f"Failed to retrieve data. Status code: {response.status_code}")
+            print(f"Failed to retrieve data. Status code: {response.status_code}")
             return None
-
-
-
 
     def writeExtractDataintoGCS(self,project_id, source_data, bucket_name, destination_blob_name, api_url):
         """
@@ -78,7 +73,7 @@ class Utils():
             data=source_data,
             content_type='application/json', timeout=100
         )
-        logging.info(f" write data successfully in {bucket_name}/{destination_blob_name}")
+        print(f" write data successfully in {bucket_name}/{destination_blob_name}")
 
     ## define function readDataFromLandingGcs for read data from gcs bucket(from landing or bronze layer)
 
@@ -112,7 +107,7 @@ class Utils():
         return data_json
 
     ## define extractRequiredData function
-    def extractRequiredDataAndFlatten(self,data):
+    def extractRequiredData(self,data):
         """
                 Extracts required data features from the given JSON data.
 
@@ -128,30 +123,19 @@ class Utils():
 
         ## fetch count of records
         cnt_rcd = metadata_dic['count']
-        logging.info(f"total number of records {cnt_rcd}")
+        print(f"total number of records {cnt_rcd}")
 
         ## fetch the required data (features)
         required_data = data['features']
         # print(required_data,type(required_data)) ##list
 
         reuired_data_lst = []
-        for feature_dict in required_data:
+        for dict in required_data:
             ## fetch properties
-            properties_dic = feature_dict["properties"]
+            properties_dic = dict["properties"]
 
             ## add geometry cordinate in  properties
-            properties_dic["geometry"] = {"longtiude": feature_dict["geometry"]["coordinates"][0],
-                                          "latitude": feature_dict["geometry"]["coordinates"][1],
-                                          "depth": float(feature_dict["geometry"]["coordinates"][2]) if
-                                          feature_dict["geometry"]["coordinates"][2] is not None else None
-                                          }
-
-            for key, value in properties_dic.items():
-                # Convert fields to float where necessary
-                if key in ['mag', 'cdi', 'mmi', 'dmin', 'rms', 'gap']:
-                    properties_dic[key] = float(value) if value is not None else None
-                else:
-                    properties_dic[key] = value
+            properties_dic["geometry"] = dict["geometry"]["coordinates"]
 
             ## append properties_dic in list
             reuired_data_lst.append(properties_dic)
@@ -168,15 +152,8 @@ class Utils():
                 """
         ### Define the schema
 
-        # Define the schema for the geometry field
-        geometry_schema = StructType([
-            StructField("longitude", FloatType(), nullable=True),
-            StructField("latitude", FloatType(), nullable=True),
-            StructField("depth", FloatType(), nullable=True)
-        ])
-
         DF_schema = StructType([
-            StructField("mag", FloatType(), True),
+            StructField("mag", StringType(), True),
             StructField("place", StringType(), True),
             StructField("time", StringType(), True),
             StructField("updated", StringType(), True),
@@ -184,8 +161,8 @@ class Utils():
             StructField("url", StringType(), True),
             StructField("detail", StringType(), True),
             StructField("felt", StringType(), True),
-            StructField("cdi", FloatType(), True),
-            StructField("mmi", FloatType(), True),
+            StructField("cdi", StringType(), True),
+            StructField("mmi", StringType(), True),
             StructField("alert", StringType(), True),
             StructField("status", StringType(), True),
             StructField("tsunami", IntegerType(), True),
@@ -196,19 +173,17 @@ class Utils():
             StructField("sources", StringType(), True),
             StructField("types", StringType(), True),
             StructField("nst", IntegerType(), True),
-            StructField("dmin", FloatType(), True),
-            StructField("rms", FloatType(), True),
-            StructField("gap", FloatType(), True),
+            StructField("dmin", StringType(), True),
+            StructField("rms", StringType(), True),
+            StructField("gap", StringType(), True),
             StructField("magType", StringType(), True),
             StructField("type", StringType(), True),
             StructField("title", StringType(), True),
-            StructField("geometry", geometry_schema, True)
-
+            StructField("geometry", ArrayType(StringType()), True)
 
 
         ])
-        return DF_schema
-
+        return  DF_schema
 
     ## define convertIntoDF function
     def convertIntoDF(self,spark,reuired_data_lst_of_dict,data_frame_schema = None):
@@ -232,31 +207,8 @@ class Utils():
         # earthquake_data.printSchema()
         return earthquake_data
 
-
-    def applyTransformation(self,earthquake_df):
-        """
-                Flattens the earthquake DataFrame and transforms certain columns.
-
-                Parameters:
-                    earthquake_df: The DataFrame to flatten.
-
-                Returns:
-                    DataFrame: The flattened DataFrame with transformed columns.
-                """
-
-        ## conver UNIX timestamps( in milliseconds )to timestamp(Convert milliseconds to seconds and then to readable timestamp)
-        ## Using split() to extract area and Generate column “area” -
-        eq_formated_df = (earthquake_df
-                           .withColumn('time', to_timestamp(from_unixtime(col('time') / 1000)))
-                           .withColumn('updated', to_timestamp(from_unixtime(col('updated') / 1000)))
-                           .withColumn('area', expr("substring(place, instr(place, 'of') + 3, length(place))"))
-                           )
-
-
-        return eq_formated_df
-
     ## define writeIntoGcs function for write data in gcs bucket
-    def writeIntoGcs(self, earthquake_df, output_path,wmode ="overwrite"):
+    def writeIntoGcs(self, earthquake_df, output_path):
         """
         Writes a DataFrame into a GCS bucket as JSON.
 
@@ -269,8 +221,38 @@ class Utils():
         """
 
         # Attempt to write the DataFrame to JSON
-        earthquake_df.coalesce(2).write.mode(wmode).json(output_path)
-        logging.info(f"data write successfully in {output_path}")
+        earthquake_df.coalesce(2).write.mode('overwrite').json(output_path)
+        print(f"data write successfully in {output_path}")
+
+    def flattenData(self,earthquake_df):
+        """
+                Flattens the earthquake DataFrame and transforms certain columns.
+
+                Parameters:
+                    earthquake_df: The DataFrame to flatten.
+
+                Returns:
+                    DataFrame: The flattened DataFrame with transformed columns.
+                """
+        ## flatten the data
+        ## conver UNIX timestamps( in milliseconds )to timestamp(Convert milliseconds to seconds and then to readable timestamp)
+        ## Using split() to extract area and Generate column “area” -
+        ## add one cloumn insert date
+
+        flatten_data_df = (earthquake_df
+                           .withColumn('time', to_timestamp(from_unixtime(col('time') / 1000)))
+                           .withColumn('updated', to_timestamp(from_unixtime(col('updated') / 1000)))
+                           .withColumn('area', expr("substring(place, instr(place, 'of') + 3, length(place))"))
+                           .withColumn('longtitude', col('geometry').getItem(0).cast('float'))
+                           .withColumn('latitude', col('geometry').getItem(1).cast('float'))
+                           .withColumn('depth', col('geometry').getItem(2).cast('float'))
+                           .withColumn('insert_date',
+                                       current_timestamp())  ##  we can also use  lit(insert_date )= datetime.now().strftime('%Y%m%d %H%M%S')
+                           .drop(col("geometry"))
+
+                           )
+
+        return flatten_data_df
 
         ## schema for bigquery
 
@@ -282,43 +264,39 @@ class Utils():
                     list: A list of dictionaries representing the BigQuery schema.
                 """
         # Define the schema with mode
-        bq_schema = {
-            "fields": [
-                {"name": "mag", "type": "FLOAT"},
-                {"name": "place", "type": "STRING"},
-                {"name": "time", "type": "TIMESTAMP"},
-                {"name": "updated", "type": "TIMESTAMP"},
-                {"name": "tz", "type": "INTEGER"},
-                {"name": "url", "type": "STRING"},
-                {"name": "detail", "type": "STRING"},
-                {"name": "felt", "type": "INTEGER"},
-                {"name": "cdi", "type": "FLOAT"},
-                {"name": "mmi", "type": "FLOAT"},
-                {"name": "alert", "type": "STRING"},
-                {"name": "status", "type": "STRING"},
-                {"name": "tsunami", "type": "INTEGER"},
-                {"name": "sig", "type": "INTEGER"},
-                {"name": "net", "type": "STRING"},
-                {"name": "code", "type": "STRING"},
-                {"name": "ids", "type": "STRING"},
-                {"name": "sources", "type": "STRING"},
-                {"name": "types", "type": "STRING"},
-                {"name": "nst", "type": "INTEGER"},
-                {"name": "dmin", "type": "FLOAT"},
-                {"name": "rms", "type": "FLOAT"},
-                {"name": "gap", "type": "FLOAT"},
-                {"name": "magType", "type": "STRING"},
-                {"name": "type", "type": "STRING"},
-                {"name": "title", "type": "STRING"},
-                {"name": "geometry", "type": "RECORD", "fields": [
-                    {"name": "longtiude", "type": "FLOAT"},
-                    {"name": "latitude", "type": "FLOAT"},
-                    {"name": "depth", "type": "FLOAT"}
-                ]},
-                {"name": "area", "type": "STRING"},
-                {"name": "insert_date", "type": "TIMESTAMP"}
-            ]
-        }
+        bq_schema = [
+            {"name": "mag", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "place", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "time", "type": "TIMESTAMP", "mode": "NULLABLE"},
+            {"name": "updated", "type": "TIMESTAMP", "mode": "NULLABLE"},
+            {"name": "tz", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "url", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "detail", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "felt", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "cdi", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "mmi", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "alert", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "status", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "tsunami", "type": "INTEGER", "mode": "NULLABLE"},
+            {"name": "sig", "type": "INTEGER", "mode": "NULLABLE"},
+            {"name": "net", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "code", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "ids", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "sources", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "types", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "nst", "type": "INTEGER", "mode": "NULLABLE"},
+            {"name": "dmin", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "rms", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "gap", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "magType", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "type", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "title", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "area", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "longtitude", "type": "FLOAT", "mode": "NULLABLE"},
+            {"name": "latitude", "type": "FLOAT", "mode": "NULLABLE"},
+            {"name": "depth", "type": "FLOAT", "mode": "NULLABLE"},
+            {"name": "insert_date", "type": "TIMESTAMP", "mode": "NULLABLE"}
+        ]
 
         return bq_schema
 
@@ -339,19 +317,19 @@ class Utils():
             ##call function bqSchema to get bq schema
             bq_schema = self.bqSchema()
 
-
-        data_df=data_df.withColumn('insert_date',current_timestamp())  ##  we can also use  lit(insert_date )= datetime.now().strftime('%Y%m%d %H%M%S')
+        print(f'{data_df.count()}: no of records ')
 
         data_df.write.format('bigquery').option("table", output_db) \
-            .option('schema',bq_schema)\
+            .option("schema", bq_schema) \
             .option("createDisposition", "CREATE_IF_NEEDED") \
             .option("writeDisposition", "WRITE_APPEND") \
             .mode('append') \
             .save()
+        print(f"load data successfully in {output_db}")
 
 
     ## define createDFforAuditTbl function for create df for audit data
-    def createDFforAuditTbl(self,spark_1, job_id, pipeline_name, function_name, start_time, end_time, status,error_msg,
+    def createDFforAuditTbl(self,spark_1, job_id, pipeline_name, function_name, start_time, end_time, status,
                             process_record=0):
         """
                 Creates a DataFrame for audit logs with job execution details.
@@ -364,21 +342,18 @@ class Utils():
                     start_time (str): Start time of the job execution.
                     end_time (str): End time of the job execution.
                     status (str): Status of the job execution (e.g., SUCCESS, FAILURE).
-                    error_msg(str):  error message (string) for failed jobs.
                     process_record (int, optional): Number of records processed. Defaults to 0.
 
                 Returns:
                     DataFrame: A DataFrame containing the audit log entry.
         """
 
-        # Create audit entries using Row
         audit_entry = [Row(job_id=job_id,
                            pipeline_name=pipeline_name,
                            function_name=function_name,
                            start_time=start_time,
                            end_time=end_time,
                            status=status,
-                           error_msg=error_msg,
                            process_record=process_record)]
 
         schema = StructType([
@@ -388,7 +363,6 @@ class Utils():
             StructField('start_time', StringType(), True),
             StructField('end_time', StringType(), True),
             StructField('status', StringType(), True),
-            StructField('error_msg', StringType(), True),
             StructField('process_record', IntegerType(), True),
 
         ])
@@ -396,6 +370,9 @@ class Utils():
         # Create DataFrame with the provided schema
         audit_df = spark_1.createDataFrame(audit_entry, schema)
 
+        # Show the DataFrame
+        # audit_df.show(truncate=False)
+        # audit_df.printSchema()
         return audit_df
 
     ### defind function for create audit tbl schema
@@ -413,32 +390,12 @@ class Utils():
             {"name": "start_time", "type": "TIMESTAMP", "mode": "NULLABLE"},
             {"name": "end_time", "type": "TIMESTAMP", "mode": "NULLABLE"},
             {"name": "status", "type": "STRING", "mode": "NULLABLE"},
-            {"name": "error_msg", "type": "STRING", "mode": "NULLABLE"},
             {"name": "process_record", "type": "INTEGER", "mode": "NULLABLE"}
         ]
         return audit_table_schema
 
 
-    def log_audit(self, spark, job_id, pipeline_name, function_name, start_time, end_time, status, process_record,audit_output_db,error_msg):
-        """Logs audit information to BigQuery.
-                Parameters:
-                - spark: SparkSession used for DataFrame operations.
-                - job_id: Unique identifier for the job.
-                - pipeline_name: Name of the pipeline.
-                - function_name: Name of the function.
-                - start_time: Job start time (string).
-                - end_time: Job end time (string).
-                - status: Job status (e.g., "SUCCESS", "FAILED").
-                - process_record: Number of records processed.
-                - audit_output_db: BigQuery dataset/table for logging.
-                - error_msg:  error message (string) for failed jobs.
 
-                This function creates an audit DataFrame and writes it to BigQuery for tracking job performance.
-
-        """
-        audit_df = self.createDFforAuditTbl(spark, job_id, pipeline_name, function_name, start_time, end_time, status,error_msg,process_record)
-        audit_table_schema = self.auditTblSchema()
-        self.writeDataBigquery(audit_output_db, audit_df, audit_table_schema)
 
 
 
